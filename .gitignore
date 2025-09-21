@@ -15,3 +15,6 @@ threat_genomes.json
 
 # Local environment directory
 /env/
+
+# Compiled executables
+/bin/

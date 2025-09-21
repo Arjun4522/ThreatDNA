@@ -1,36 +1,13 @@
-package main
+package threatdnacore
 
 import (
 	"encoding/json"
-	"flag"
 	"io/ioutil"
 	"log"
-	"os"
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
 )
-
-// Genome represents a threat actor's profile from threat_genomes.json
-type Genome struct {
-	ID          string    `json:"id"`
-	SourceIDs   []string  `json:"source_ids"`
-	Actor       string    `json:"actor"`
-	Campaign    string    `json:"campaign"`
-	TTPs        []string  `json:"ttps"`
-	Tactics     []string  `json:"tactics"`
-	Platforms   []string  `json:"platforms"`
-	FirstSeen   time.Time `json:"first_seen"`
-	LastSeen    time.Time `json:"last_seen"`
-	Confidence  float64   `json:"confidence"`
-	SourceCount int       `json:"source_count"`
-}
-
-// CTIRecord represents a single report from cti_results.json
-type CTIRecord struct {
-	ID      string `json:"id"`
-	RawText string `json:"raw_text"`
-}
 
 // SearchDocument is the enriched document we will store in the Bleve index.
 type SearchDocument struct {
@@ -46,50 +23,8 @@ type SearchDocument struct {
 	Type            string    `json:"type"`
 }
 
-func main() {
-	// --- 1. Define and Parse Command-Line Flags ---
-	overwrite := flag.Bool("overwrite", false, "If set, delete the existing index before creating a new one.")
-	flag.Parse()
-
-	indexPath := "threats.bleve"
-
-	// --- 2. Handle Existing Index ---
-	if _, err := os.Stat(indexPath); err == nil {
-		// Index path exists
-		if *overwrite {
-			log.Printf("Index '%s' already exists. Overwriting as requested...", indexPath)
-			if err := os.RemoveAll(indexPath); err != nil {
-				log.Fatalf("Failed to remove existing index: %v", err)
-			}
-		} else {
-			// Path exists but overwrite flag is not set
-			log.Printf("Error: Index '%s' already exists.", indexPath)
-			log.Println("Use the --overwrite flag to delete the existing index and rebuild it.")
-			os.Exit(1)
-		}
-	} else if !os.IsNotExist(err) {
-		// Some other error occurred trying to stat the path
-		log.Fatalf("Error checking index path '%s': %v", indexPath, err)
-	}
-
-	// --- 3. Load Source Data ---
-	log.Println("Loading source JSON files...")
-	genomes, ctiMap := loadData()
-
-	// --- 4. Build the Bleve Index ---
-	log.Printf("Creating new Bleve index at '%s'...", indexPath)
-	index := createIndex(indexPath)
-	defer index.Close()
-
-	// --- 5. Index the Data ---
-	log.Println("Indexing documents...")
-	indexData(index, genomes, ctiMap)
-
-	log.Println("Indexing complete.")
-}
-
 // loadData reads and parses the source JSON files.
-func loadData() ([]Genome, map[string]string) {
+func LoadIndexerData() ([]Genome, map[string]string) {
 	genomeData, err := ioutil.ReadFile("threat_genomes.json")
 	if err != nil {
 		log.Fatalf("Failed to read threat_genomes.json: %v", err)
@@ -116,7 +51,7 @@ func loadData() ([]Genome, map[string]string) {
 }
 
 // createIndex builds and returns a new Bleve index with the correct mapping.
-func createIndex(indexPath string) bleve.Index {
+func CreateBleveIndex(indexPath string) bleve.Index {
 	keywordFieldMapping := bleve.NewKeywordFieldMapping()
 	testFieldMapping := bleve.NewTextFieldMapping()
 
@@ -139,9 +74,9 @@ func createIndex(indexPath string) bleve.Index {
 }
 
 // indexData enriches and indexes the documents in batches.
-func indexData(index bleve.Index, genomes []Genome, ctiMap map[string]string) {
+func IndexBleveData(index bleve.Index, genomes []Genome, ctiMap map[string]string) {
 
-batch := index.NewBatch()
+	batch := index.NewBatch()
 	count := 0
 
 	for _, genome := range genomes {

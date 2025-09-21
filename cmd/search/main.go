@@ -1,4 +1,3 @@
-
 package main
 
 import (
@@ -7,6 +6,7 @@ import (
 	"os"
 
 	"github.com/blevesearch/bleve/v2"
+
 )
 
 func main() {

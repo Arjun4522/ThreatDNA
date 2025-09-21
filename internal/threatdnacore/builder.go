@@ -1,4 +1,4 @@
-package main
+package threatdnacore
 
 import (
 	"crypto/sha256"
@@ -12,66 +12,9 @@ import (
 	"github.com/boltdb/bolt"
 )
 
-// CTIRecord represents the structure from your cti_results.json
-type CTIRecord struct {
-	ID       string    `json:"id"`
-	Source   string    `json:"source"`
-	Date     time.Time `json:"date"`
-	Actor    string    `json:"actor,omitempty"`
-	Campaign string    `json:"campaign,omitempty"`
-	RawText  string    `json:"raw_text"`
-	TTPs     []TTP     `json:"ttps,omitempty"`
-	IOCs     []IOC     `json:"iocs,omitempty"`
-	Tags     []string  `json:"tags,omitempty"`
-}
-
-// TTP represents a Tactic, Technique, or Procedure with confidence
-type TTP struct {
-	TechniqueID string  `json:"technique_id"`
-	Confidence  float64 `json:"confidence"`
-	Context     string  `json:"context"`
-	Tactic      string  `json:"tactic,omitempty"`
-}
-
-// IOC represents Indicators of Compromise
-type IOC struct {
-	Type    string `json:"type"`
-	Value   string `json:"value"`
-	Context string `json:"context,omitempty"`
-}
-
-// Genome represents a complete threat sequence
-type Genome struct {
-	ID           string    `json:"id"`
-	SourceIDs    []string  `json:"source_ids"`
-	Actor        string    `json:"actor,omitempty"`
-	Campaign     string    `json:"campaign,omitempty"`
-	TTPs         []string  `json:"ttps"`
-	Tactics      []string  `json:"tactics"`
-	Platforms    []string  `json:"platforms"`
-	CVEs         []string  `json:"cves,omitempty"`
-	FirstSeen    time.Time `json:"first_seen"`
-	LastSeen     time.Time `json:"last_seen"`
-	Confidence   float64   `json:"confidence"`
-	SourceCount  int       `json:"source_count"`
-	IOCCount     int       `json:"ioc_count"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
-}
-
 // GenomeBuilder creates genomes from CTI records
 type GenomeBuilder struct {
 	db *bolt.DB
-}
-
-// GenomeStats provides analytics on genome collection
-type GenomeStats struct {
-	TotalGenomes      int                `json:"total_genomes"`
-	UniqueActors      int                `json:"unique_actors"`
-	UniqueCampaigns   int                `json:"unique_campaigns"`
-	AvgGenomeLength   float64            `json:"avg_genome_length"`
-	TTPFrequency      map[string]int     `json:"ttp_frequency"`
-	TacticFrequency   map[string]int     `json:"tactic_frequency"`
-	IOCTypeFrequency  map[string]int     `json:"ioc_type_frequency"`
 }
 
 const (
@@ -238,7 +181,7 @@ func (gb *GenomeBuilder) BuildGenome(records []CTIRecord) (*Genome, error) {
 		Metadata: map[string]interface{}{
 			"build_time": time.Now(),
 			"ttp_count":  len(ttps),
-			"unique_tactics": len(removeDuplicates(tactics)),
+			"unique_tactics": len(RemoveDuplicates(tactics)),
 		},
 	}
 
@@ -472,7 +415,7 @@ func isValidPlatform(tag string) bool {
 	return false
 }
 
-func removeDuplicates(items []string) []string {
+func RemoveDuplicates(items []string) []string {
 	seen := make(map[string]bool)
 	var result []string
 	for _, item := range items {
@@ -482,145 +425,4 @@ func removeDuplicates(items []string) []string {
 		}
 	}
 	return result
-}
-
-// Main function to build genomes from CTI results
-func main() {
-	log.Println("🧬 ThreatDNA Genome Builder")
-	log.Println("=" + strings.Repeat("=", 50))
-
-	// Load CTI records from JSON file
-	records, err := LoadCTIRecords("cti_results.json")
-	if err != nil {
-		log.Fatalf("Failed to load CTI records: %v", err)
-	}
-
-	// Initialize genome builder
-	builder, err := NewGenomeBuilder("threat_genomes.db")
-	if err != nil {
-		log.Fatalf("Failed to create genome builder: %v", err)
-	}
-	defer builder.Close()
-
-	// Group records by actor for genome building
-	recordGroups := make(map[string][]CTIRecord)
-	for _, record := range records {
-		// Use actor as primary grouping key
-		key := record.Actor
-		if key == "" || key == "Unknown" {
-			// Fallback to campaign or source-based grouping
-			if record.Campaign != "" {
-				key = "Campaign:" + record.Campaign
-			} else {
-				key = "Source:" + record.Source
-			}
-		}
-		recordGroups[key] = append(recordGroups[key], record)
-	}
-
-	log.Printf("📊 Grouped %d records into %d genome candidates", len(records), len(recordGroups))
-
-	var genomes []*Genome
-	// Build genomes for each group
-	for groupKey, groupRecords := range recordGroups {
-		log.Printf("🧬 Building genome for: %s (%d records)", groupKey, len(groupRecords))
-		
-		genome, err := builder.BuildGenome(groupRecords)
-		if err != nil {
-			log.Printf("⚠️  Failed to build genome for %s: %v", groupKey, err)
-			continue
-		}
-
-		if err := builder.SaveGenome(genome); err != nil {
-			log.Printf("⚠️  Failed to save genome %s: %v", genome.ID, err)
-			continue
-		}
-
-		genomes = append(genomes, genome)
-		log.Printf("✅ Genome %s: %d TTPs, %.2f confidence", 
-			genome.ID, len(genome.TTPs), genome.Confidence)
-	}
-
-	// Display genome collection summary
-	log.Printf("\n🎯 Genome Collection Summary:")
-	log.Printf("=" + strings.Repeat("=", 40))
-	
-	for i, genome := range genomes {
-		fmt.Printf("\n🧬 Genome %d: %s\n", i+1, genome.ID)
-		fmt.Printf("   🎭 Actor: %s\n", genome.Actor)
-		fmt.Printf("   🚀 Campaign: %s\n", genome.Campaign)
-		fmt.Printf("   📅 Timeline: %s → %s\n", 
-			genome.FirstSeen.Format("2006-01-02"), 
-			genome.LastSeen.Format("2006-01-02"))
-		fmt.Printf("   🎯 TTPs: %v\n", genome.TTPs)
-		fmt.Printf("   ⚖️  Tactics: %v\n", removeDuplicates(genome.Tactics))
-		fmt.Printf("   💻 Platforms: %v\n", genome.Platforms)
-		fmt.Printf("   🔗 Sources: %d\n", len(genome.SourceIDs))
-		fmt.Printf("   📊 Confidence: %.2f\n", genome.Confidence)
-		fmt.Printf("   🔍 IOCs: %d\n", genome.IOCCount)
-	}
-
-	// Display statistics
-	stats, err := builder.GetGenomeStats()
-	if err != nil {
-		log.Printf("⚠️  Failed to get stats: %v", err)
-		return
-	}
-
-	fmt.Printf("\n📈 Collection Statistics:\n")
-	fmt.Printf("=" + strings.Repeat("=", 30) + "\n")
-	fmt.Printf("🧬 Total Genomes: %d\n", stats.TotalGenomes)
-	fmt.Printf("🎭 Unique Actors: %d\n", stats.UniqueActors)
-	fmt.Printf("🚀 Unique Campaigns: %d\n", stats.UniqueCampaigns)
-	fmt.Printf("📏 Avg Genome Length: %.1f TTPs\n", stats.AvgGenomeLength)
-
-	// Show top TTPs across all genomes
-	fmt.Printf("\n🔥 Most Frequent TTPs:\n")
-	type ttpCount struct {
-		ttp   string
-		count int
-	}
-	var ttps []ttpCount
-	for ttp, count := range stats.TTPFrequency {
-		ttps = append(ttps, ttpCount{ttp, count})
-	}
-	sort.Slice(ttps, func(i, j int) bool { return ttps[i].count > ttps[j].count })
-	
-	for i, ttp := range ttps {
-		if i >= 7 { // Show top 7
-			break
-		}
-		fmt.Printf("  %d. %s - %d genomes\n", i+1, ttp.ttp, ttp.count)
-	}
-
-	// Show top tactics
-	fmt.Printf("\n⚔️  Most Common Tactics:\n")
-	type tacticCount struct {
-		tactic string
-		count  int
-	}
-	var tactics []tacticCount
-	for tactic, count := range stats.TacticFrequency {
-		tactics = append(tactics, tacticCount{tactic, count})
-	}
-	sort.Slice(tactics, func(i, j int) bool { return tactics[i].count > tactics[j].count })
-	
-	for i, tactic := range tactics {
-		if i >= 5 { // Show top 5
-			break
-		}
-		fmt.Printf("  %d. %s - %d occurrences\n", i+1, 
-			strings.Title(strings.ReplaceAll(tactic.tactic, "-", " ")), 
-			tactic.count)
-	}
-
-	// Export genomes to JSON
-	genomesJSON, err := json.MarshalIndent(genomes, "", "  ")
-	if err == nil {
-		if err := ioutil.WriteFile("threat_genomes.json", genomesJSON, 0644); err == nil {
-			log.Printf("\n💾 Genomes exported to threat_genomes.json")
-		}
-	}
-
-	log.Printf("\n🎉 Genome building complete! Database: threat_genomes.db")
 }

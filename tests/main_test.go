@@ -1,27 +1,22 @@
-
 package tests
 
 import (
 	"testing"
 
-	// Import the main package using the module path from go.mod
-	"threatdna"
+	"threatdna/internal/threatdnacore"
 )
 
 func TestExternalTTPAndIOCExtraction(t *testing.T) {
 	// --- Setup ---
-	// We now have to call the functions from the imported 'threatdna' package.
-	// Note: This only works because the functions and types we need (like NewCTIParser, TTP, etc.)
-	// were defined with a capital letter, making them exported and accessible to other packages.
-	parser := threatdna.NewCTIParser()
+	parser := threatdnacore.NewCTIParser()
 
 	// The test needs to know the relative path to the data file.
 	// Since the test runs from the project root, the path is correct.
-	err := parser.LoadMITREDataFromFile("enterprise-attack.json")
+	err := parser.LoadMITREDataFromFile("../enterprise-attack.json")
 	if err != nil {
 		t.Fatalf("Failed to load MITRE data for test: %v", err)
 	}
-	extractor := threatdna.NewTechniqueExtractor(parser.GetAttackData()) // We need a getter for the attack data
+	extractor := threatdnacore.NewTechniqueExtractor(parser.GetAttackData())
 
 	// --- Test Case ---
 	sampleText := `
@@ -32,7 +27,7 @@ func TestExternalTTPAndIOCExtraction(t *testing.T) {
 	`
 
 	// --- Execution ---
-	tps := extractor.ExtractTTPs(sampleText)
+	ttps := extractor.ExtractTTPs(sampleText)
 	iocs := extractor.ExtractIOCs(sampleText)
 
 	// --- Assertions ---
