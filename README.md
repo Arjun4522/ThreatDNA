@@ -21,19 +21,29 @@ A Cyber Threat Intelligence (CTI) analysis pipeline that automatically ingests t
 
 ```
 /ThreatDNA
+|-- cmd/                      # Contains main packages for executables
+|   |-- builder/main.go       # Stage 2: Aggregates data and builds genomes
+|   |-- indexer/main.go       # Stage 3: Creates the search index from final data
+|   |-- search/main.go        # Stage 4: CLI to query the search index
+|-- bin/                      # Compiled executables
 |-- data/                     # Processed HTML reports
 |-- reports/                  # Raw downloaded PDF reports
 |-- threats.bleve/            # The self-contained Bleve search index
-|
+|\
+|-- internal/threatdnacore/   # Core library for ThreatDNA functionalities
+|   |-- builder.go            # Genome building logic
+|   |-- extractor.go          # TTP and IOC extraction logic
+|   |-- indexer.go            # Indexing logic
+|   |-- ingester.go           # Data ingestion logic
+|   |-- parser.go             # CTI parsing logic
+|   |-- types.go              # Data structures
+|\
 |-- main.go                   # Stage 1: Parses reports, extracts TTPs/IOCs
-|-- builder.go                # Stage 2: Aggregates data and builds genomes
-|-- indexer.go                # Stage 3: Creates the search index from final data
-|-- search.go                 # Stage 4: CLI to query the search index
-|
+|\
 |-- fetch.py                  # Helper script to download PDF reports
 |-- format.py                 # Helper script to convert PDFs to HTML
 |-- requirements.txt          # Python dependencies for helper scripts
-|
+|\
 |-- enterprise-attack.json    # Full MITRE ATT&CK dataset used for TTP mapping
 |-- cti_results.json          # Intermediate structured data from main.go
 |-- threat_genomes.json       # Final aggregated genome data from builder.go
@@ -58,15 +68,15 @@ The project operates as a four-stage pipeline:
 *   It also extracts IOCs (IPs, domains, hashes) and key metadata like the threat actor and campaign name.
 *   The output is `cti_results.json`, a structured file where each entry represents a single processed report.
 
-**3. Genome Aggregation (`builder.go`)**
+**3. Genome Aggregation (`cmd/builder/main.go`)**
 *   This program reads `cti_results.json`.
 *   It groups all reports by the identified threat actor.
 *   For each actor, it aggregates the data to create a `Genome`, which includes a unique, confidence-ranked sequence of TTPs that represents the actor's typical attack chain.
 *   The final genomes are saved to `threat_genomes.db` and exported to `threat_genomes.json`.
 
-**4. Indexing & Search (`indexer.go`, `search.go`)**
-*   The `indexer.go` program reads the final `threat_genomes.json` and the intermediate `cti_results.json` to build a rich, searchable index using the Bleve library. The index is stored in the `threats.bleve` directory.
-*   The `search.go` program provides a command-line interface to query this index.
+**4. Indexing & Search (`cmd/indexer/main.go`, `cmd/search/main.go`)**
+*   The `cmd/indexer/main.go` program reads the final `threat_genomes.json` and the intermediate `cti_results.json` to build a rich, searchable index using the Bleve library. The index is stored in the `threats.bleve` directory.
+*   The `cmd/search/main.go` program provides a command-line interface to query this index.
 
 ---
 
@@ -92,6 +102,13 @@ The project operates as a four-stage pipeline:
     pip install -r requirements.txt
     ```
 
+3.  **Build Go Executables:**
+    ```bash
+    go build -o bin/builder cmd/builder/main.go
+    go build -o bin/indexer cmd/indexer/main.go
+    go build -o bin/search cmd/search/main.go
+    ```
+
 ### Running the Full Pipeline
 
 Execute these commands in order from the project root directory.
@@ -104,48 +121,48 @@ Execute these commands in order from the project root directory.
 
 2.  **Parse Reports and Extract Data:**
     ```bash
-    go run main.go
+    go run .
     ```
 
 3.  **Build Threat Genomes:**
     ```bash
-    go run builder.go
+    ./bin/builder
     ```
 
 4.  **Create the Search Index:**
     *(You only need to run this once after building the genomes, or when they are updated)*
     ```bash
-    go run indexer.go --overwrite
+    ./bin/indexer --overwrite
     ```
 
 ### Searching the Data
 
-Once the index is built, you can use `search.go` to ask questions.
+Once the index is built, you can use the compiled `search` executable to ask questions.
 
 *   **Basic Text Search:**
     ```bash
     # Find all genomes from reports mentioning "ransomware"
-    go run search.go "ransomware"
+    ./bin/search "ransomware"
     ```
 
 *   **Actor Search (with Boosting):**
     ```bash
     # The engine ranks the actual actor "OutSteel" highest
-    go run search.go "OutSteel"
+    ./bin/search "OutSteel"
     ```
 
 *   **Behavioral Sequence Search:**
     *(Note: This requires reverting `search.go` to the version that supports phrase queries)*
     ```bash
     # Find actors that use Phishing then Command & Scripting
-    go run search.go "T1566,T1059"
+    ./bin/search "T1566,T1059"
     ```
 
 *   **Threat Actor Similarity Search:**
     *(Note: This requires reverting `search.go` to the version that supports similarity search)*
     ```bash
     # Find actors that behave like apt42
-    go run search.go --similar-to "apt42"
+    ./bin/search --similar-to "apt42"
     ```
 
 ---
