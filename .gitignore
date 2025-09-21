@@ -1,0 +1,17 @@
+
+# Bleve search index
+/threats.bleve/
+
+# BoltDB database
+threat_genomes.db
+
+# Generated data directories
+/reports/
+/data/
+
+# Generated JSON output
+cti_results.json
+threat_genomes.json
+
+# Local environment directory
+/env/

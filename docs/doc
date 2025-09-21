@@ -1,0 +1,4 @@
+go run main.go 
+go run builder.go 
+go run indexer.go 
+go run search.go "Query"
