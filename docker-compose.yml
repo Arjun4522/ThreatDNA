@@ -35,7 +35,8 @@ services:
     build:
       context: .
       dockerfile: cmd/builder/Dockerfile
-    depends_on: []
+    depends_on:
+      - kafka
     environment:
       KAFKA_BROKER: kafka:9092
       KAFKA_TOPIC: test-cti-records
@@ -49,7 +50,8 @@ services:
     build:
       context: .
       dockerfile: cmd/indexer/Dockerfile
-    depends_on: []
+    depends_on:
+      - builder
     environment:
       DB_PATH: /app/threats.bleve/test_genomes.db # Assuming indexer uses the same DB
     volumes:
