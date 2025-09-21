@@ -11,7 +11,7 @@ import (
 	"threatdna/internal/threatdnacore"
 )
 
-const indexPath = "threats.bleve"
+const indexPath = "threats.bleve/bleve_index"
 const listenPort = ":8080"
 
 // searchHandler handles search requests from the frontend

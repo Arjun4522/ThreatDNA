@@ -1,13 +1,9 @@
 version: '3'
+
+volumes:
+  threats_bleve_data:
+
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.0.1
-    hostname: zookeeper
-    ports:
-      - "2181:2181"
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
 
   kafka:
     image: confluentinc/cp-kafka:7.0.1
@@ -51,7 +47,7 @@ services:
       KAFKA_TOPIC: test-cti-records
       DB_PATH: /app/threats.bleve/test_genomes.db
     volumes:
-      - ./threats.bleve:/app/threats.bleve
+      - threats_bleve_data:/app/threats.bleve
       - ./data:/app/data
     command: ["builder"]
 
@@ -64,8 +60,8 @@ services:
     environment:
       DB_PATH: /app/threats.bleve/test_genomes.db # Assuming indexer uses the same DB
     volumes:
-      - ./threats.bleve:/app/threats.bleve
-    command: ["indexer"]
+      - threats_bleve_data:/app/threats.bleve
+    command: ["sh", "-c", "sleep 60 && indexer"]
 
   search:
     build:
@@ -76,7 +72,7 @@ services:
     environment:
       DB_PATH: /app/threats.bleve/test_genomes.db # Assuming search queries the same DB
     volumes:
-      - ./threats.bleve:/app/threats.bleve
+      - threats_bleve_data:/app/threats.bleve
     ports:
       - "8080:8080" # Example port if search exposes an API
     command: ["search"]

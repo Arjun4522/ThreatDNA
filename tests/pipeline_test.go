@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	testDBPath    = "threat_genomes.db" // Relative to project root
+	testDBPath    = "./threats.bleve/threat_genomes.db" // Relative to project root
 	testKafkaBroker = "localhost:9093"
 	testKafkaTopic  = "test-cti-records"
-	ctiFile       = "enterprise-attack.json" // Relative to tests/ directory
+	ctiFile       = "../enterprise-attack.json" // Relative to tests/ directory
 )
 
 func TestMain(m *testing.M) {

@@ -1,16 +1,13 @@
 package main
 
 import (
-	"context"
 	"log"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"threatdna/internal/threatdnacore"
 )
 
-const dbPath = "threats.bleve/genomes.db"
+const dbPath = "threats.bleve/test_genomes.db"
 
 func main() {
 	log.Println("Starting ThreatDNA Builder")
@@ -35,6 +32,9 @@ func main() {
 
 	// Initialize and process data directory
 	ingester := threatdnacore.NewDataIngester()
+	if err := ingester.Initialize(); err != nil {
+		log.Fatalf("Failed to initialize data ingester: %v", err)
+	}
 	log.Println("📁 Processing HTML data Directory...")
 	records, err := ingester.IngestDirectory("data")
 	if err != nil {
@@ -54,19 +54,6 @@ func main() {
 		log.Println("✅ Finished processing records from data directory.")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start Kafka consumer in a goroutine
-	go builder.StartKafkaConsumer(ctx)
-
-	log.Println("ThreatDNA Builder started. Waiting for CTI records from Kafka...")
-
-	// Graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
-
-	log.Println("Shutting down ThreatDNA Builder...")
-	cancel() // Signal consumer to stop
+	log.Println("ThreatDNA Builder finished processing data directory.")
+	os.Exit(0)
 }

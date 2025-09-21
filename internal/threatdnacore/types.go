@@ -85,8 +85,9 @@ type Genome struct {
 	LastSeen     time.Time `json:"last_seen"`
 	Confidence   float64   `json:"confidence"`
 	SourceCount  int       `json:"source_count"`
-	IOCCount     int       `json:"ioc_count"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	IOCCount    int                    `json:"ioc_count"`
+	AllSourceText string                 `json:"all_source_text"`
+	Metadata    map[string]interface{} `json:"metadata"`
 }
 
 // GenomeStats provides analytics on genome collection

@@ -29,7 +29,7 @@ COPY --from=builder /usr/local/bin/search /usr/local/bin/search
 COPY --from=builder /app/internal/threatdnacore /app/internal/threatdnacore
 
 # Copy the threats.bleve directory
-COPY threats.bleve /app/threats.bleve
+
 
 # Expose any necessary ports (if the search has an API or serves anything)
 # EXPOSE 8080

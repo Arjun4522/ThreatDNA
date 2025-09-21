@@ -7,25 +7,20 @@ ThreatDNA is a comprehensive platform for processing, analyzing, and querying Cy
 
 ### Technologies Used
 - **Go:** Primary language for backend services.
-- **Kafka:** Distributed streaming platform for real-time CTI data ingestion.
-- **Zookeeper:** Manages Kafka brokers.
 - **BoltDB:** A key/value store used for persistent storage of threat genomes.
 - **Bleve:** A full-text search and indexing library for Go, used for efficient querying of threat data.
 - **Docker & Docker Compose:** For containerization and orchestration of all backend services.
 
 ### Services
-- **Zookeeper & Kafka:** Provide the core messaging infrastructure for the CTI pipeline.
-- **Producer:** Ingests static CTI data (e.g., from `enterprise-attack.json`) and publishes it as messages to a Kafka topic.
-- **Builder:** Consumes CTI data from the Kafka topic and directly from the `data/` directory (for additional reports). It processes this raw CTI, extracts relevant threat intelligence, and builds structured threat "genomes" which are then stored in a BoltDB database.
+- **Builder:** Processes static MITRE ATT&CK data (from `enterprise-attack.json`) and HTML reports found in the `data/` directory. It extracts relevant threat intelligence and builds structured threat "genomes" which are then stored in a BoltDB database. The builder is a one-shot process that exits after processing all data.
 - **Indexer:** Reads the processed threat genomes from the BoltDB database and creates optimized full-text search indexes using Bleve.
 - **Search:** Provides an API (or command-line interface) to query the threat intelligence database, leveraging the Bleve indexes for fast and efficient searches.
 
 ### Backend Workflow
-1.  The `producer` service ingests initial CTI data from `enterprise-attack.json` and sends it to Kafka.
-2.  The `builder` service simultaneously consumes this data from Kafka and processes additional CTI reports found in the `data/` directory.
-3.  All CTI records are processed by the `builder` to create and store threat genomes in the BoltDB database.
-4.  The `indexer` service then reads these genomes and builds efficient search indexes.
-5.  Finally, the `search` service uses these indexes to respond to queries, providing access to the comprehensive threat intelligence.
+1.  The `builder` service processes static MITRE ATT&CK data from `enterprise-attack.json` and HTML reports found in the `data/` directory.
+2.  It extracts CTI and stores it in the BoltDB database. The builder then exits.
+3.  The `indexer` service then reads all genomes from the BoltDB database and builds efficient search indexes.
+4.  Finally, the `search` service uses these indexes to respond to queries, providing access to the comprehensive threat intelligence.
 
 ### Setup and Running with Docker Compose
 1.  **Prerequisites:**
@@ -43,7 +38,7 @@ ThreatDNA is a comprehensive platform for processing, analyzing, and querying Cy
     ```
 
 3.  **Start the Backend Services:**
-    To run all backend services (Kafka, Producer, Builder, Indexer, Search) in detached mode:
+    To run all backend services (Builder, Indexer, Search) in detached mode:
     ```bash
     docker-compose up -d
     ```
@@ -88,7 +83,7 @@ ThreatDNA is a comprehensive platform for processing, analyzing, and querying Cy
 ### Go Backend Tests
 1.  **Prerequisites:**
     *   [Go](https://golang.org/doc/install) installed.
-    *   Docker and Docker Compose (for integration tests that rely on Kafka/DB).
+    *   Docker and Docker Compose (for integration tests that rely on DB).
 
 2.  **Run Tests:**
     Navigate to the project root directory and run:

@@ -32,7 +32,7 @@ COPY --from=builder /app/internal/threatdnacore /app/internal/threatdnacore
 COPY enterprise-attack.json /app/enterprise-attack.json
 
 # Copy the threats.bleve directory
-COPY threats.bleve /app/threats.bleve
+
 COPY data /app/data
 
 # Expose any necessary ports (if the builder has an API or serves anything)

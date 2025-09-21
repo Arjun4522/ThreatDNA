@@ -29,7 +29,7 @@ COPY --from=builder /usr/local/bin/indexer /usr/local/bin/indexer
 COPY --from=builder /app/internal/threatdnacore /app/internal/threatdnacore
 
 # Copy the threats.bleve directory
-COPY threats.bleve /app/threats.bleve
+
 
 # Expose any necessary ports (if the indexer has an API or serves anything)
 # EXPOSE 8080

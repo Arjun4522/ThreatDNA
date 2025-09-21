@@ -124,6 +124,7 @@ func (gb *GenomeBuilder) BuildGenome(records []CTIRecord) (*Genome, error) {
 	var allTTPs []TTP
 	totalIOCs := 0
 
+	var allSourceTextBuilder strings.Builder
 	for _, record := range records {
 		sourceIDs[record.ID] = true
 		
@@ -147,6 +148,10 @@ func (gb *GenomeBuilder) BuildGenome(records []CTIRecord) (*Genome, error) {
 		// Collect TTPs
 		allTTPs = append(allTTPs, record.TTPs...)
 		totalIOCs += len(record.IOCs)
+
+		// Aggregate RawText
+		allSourceTextBuilder.WriteString(record.RawText)
+		allSourceTextBuilder.WriteString("\n") // Add a newline for separation
 	}
 
 	// Build the ordered sequence, removing duplicates
@@ -219,6 +224,7 @@ func (gb *GenomeBuilder) BuildGenome(records []CTIRecord) (*Genome, error) {
 		Confidence:  avgConfidence,
 		SourceCount: len(records),
 		IOCCount:    totalIOCs,
+		AllSourceText: allSourceTextBuilder.String(),
 		Metadata: map[string]interface{}{
 			"build_time": time.Now(),
 			"ttp_count":  len(ttps),

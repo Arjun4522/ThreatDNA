@@ -1,8 +1,6 @@
 package threatdnacore
 
 import (
-	"encoding/json"
-	"io/ioutil"
 	"log"
 	"time"
 
@@ -24,31 +22,6 @@ type SearchDocument struct {
 }
 
 // loadData reads and parses the source JSON files.
-func LoadIndexerData() ([]Genome, map[string]string) {
-	genomeData, err := ioutil.ReadFile("threat_genomes.json")
-	if err != nil {
-		log.Fatalf("Failed to read threat_genomes.json: %v", err)
-	}
-	var genomes []Genome
-	if err := json.Unmarshal(genomeData, &genomes); err != nil {
-		log.Fatalf("Failed to parse threat_genomes.json: %v", err)
-	}
-
-	ctiData, err := ioutil.ReadFile("cti_results.json")
-	if err != nil {
-		log.Fatalf("Failed to read cti_results.json: %v", err)
-	}
-	var ctiRecords []CTIRecord
-	if err := json.Unmarshal(ctiData, &ctiRecords); err != nil {
-		log.Fatalf("Failed to parse cti_results.json: %v", err)
-	}
-	ctiMap := make(map[string]string)
-	for _, rec := range ctiRecords {
-		ctiMap[rec.ID] = rec.RawText
-	}
-	log.Printf("Loaded %d genomes and %d CTI records.", len(genomes), len(ctiRecords))
-	return genomes, ctiMap
-}
 
 // createIndex builds and returns a new Bleve index with the correct mapping.
 func CreateBleveIndex(indexPath string) bleve.Index {
@@ -74,19 +47,12 @@ func CreateBleveIndex(indexPath string) bleve.Index {
 }
 
 // indexData enriches and indexes the documents in batches.
-func IndexBleveData(index bleve.Index, genomes []Genome, ctiMap map[string]string) {
+func IndexBleveData(index bleve.Index, genomes []*Genome) {
 
 	batch := index.NewBatch()
 	count := 0
 
 	for _, genome := range genomes {
-		var allText string
-		for _, sourceID := range genome.SourceIDs {
-			if text, ok := ctiMap[sourceID]; ok {
-				allText += text + "\n"
-			}
-		}
-
 		searchDoc := SearchDocument{
 			Actor:         genome.Actor,
 			Campaign:      genome.Campaign,
@@ -96,7 +62,7 @@ func IndexBleveData(index bleve.Index, genomes []Genome, ctiMap map[string]strin
 			Confidence:    genome.Confidence,
 			FirstSeen:     genome.FirstSeen,
 			LastSeen:      genome.LastSeen,
-			AllSourceText: allText,
+			AllSourceText: genome.AllSourceText,
 			Type:          "genome",
 		}
 
