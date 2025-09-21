@@ -7,11 +7,14 @@ ThreatDNA is a comprehensive platform for processing, analyzing, and querying Cy
 
 ### Technologies Used
 - **Go:** Primary language for backend services.
+- **Kafka:** Distributed streaming platform for CTI data.
+- **Zookeeper:** Manages Kafka brokers.
 - **BoltDB:** A key/value store used for persistent storage of threat genomes.
 - **Bleve:** A full-text search and indexing library for Go, used for efficient querying of threat data.
 - **Docker & Docker Compose:** For containerization and orchestration of all backend services.
 
 ### Services
+- **Zookeeper & Kafka:** Provide the core messaging infrastructure for the CTI pipeline.
 - **Builder:** Processes static MITRE ATT&CK data (from `enterprise-attack.json`) and HTML reports found in the `data/` directory. It extracts relevant threat intelligence and builds structured threat "genomes" which are then stored in a BoltDB database. The builder is a one-shot process that exits after processing all data.
 - **Indexer:** Reads the processed threat genomes from the BoltDB database and creates optimized full-text search indexes using Bleve.
 - **Search:** Provides an API (or command-line interface) to query the threat intelligence database, leveraging the Bleve indexes for fast and efficient searches.
@@ -38,7 +41,7 @@ ThreatDNA is a comprehensive platform for processing, analyzing, and querying Cy
     ```
 
 3.  **Start the Backend Services:**
-    To run all backend services (Builder, Indexer, Search) in detached mode:
+    To run all backend services (Zookeeper, Kafka, Builder, Indexer, Search) in detached mode:
     ```bash
     docker-compose up -d
     ```

@@ -4,6 +4,14 @@ volumes:
   threats_bleve_data:
 
 services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.0.1
+    hostname: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
 
   kafka:
     image: confluentinc/cp-kafka:7.0.1
@@ -22,26 +30,12 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
 
-  producer:
-    build:
-      context: .
-      dockerfile: cmd/producer/Dockerfile
-    depends_on:
-      - kafka
-    environment:
-      KAFKA_BROKER: kafka:9092
-      KAFKA_TOPIC: test-cti-records
-      CTI_FILE: /app/enterprise-attack.json
-    volumes:
-      - ./enterprise-attack.json:/app/enterprise-attack.json
-    command: ["producer"]
 
   builder:
     build:
       context: .
       dockerfile: cmd/builder/Dockerfile
-    depends_on:
-      - kafka
+    depends_on: []
     environment:
       KAFKA_BROKER: kafka:9092
       KAFKA_TOPIC: test-cti-records
@@ -55,13 +49,12 @@ services:
     build:
       context: .
       dockerfile: cmd/indexer/Dockerfile
-    depends_on:
-      - builder # Indexer depends on builder to have processed data
+    depends_on: []
     environment:
       DB_PATH: /app/threats.bleve/test_genomes.db # Assuming indexer uses the same DB
     volumes:
       - threats_bleve_data:/app/threats.bleve
-    command: ["sh", "-c", "sleep 60 && indexer"]
+    command: ["indexer"]
 
   search:
     build:
