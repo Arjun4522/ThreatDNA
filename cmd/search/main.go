@@ -1,51 +1,108 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
 	"log"
-	"os"
+	"net/http"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/rs/cors"
 
+	"threatdna/internal/threatdnacore"
 )
 
-func main() {
-	// --- 1. Check for Query and Open Index ---
-	if len(os.Args) < 2 {
-		log.Fatalf("Usage: go run search.go <query>")
+const indexPath = "threats.bleve"
+const listenPort = ":8080"
+
+// searchHandler handles search requests from the frontend
+func searchHandler(w http.ResponseWriter, r *http.Request) {
+	// Set CORS headers for all responses
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	// Handle preflight OPTIONS request
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
 	}
-	queryStr := os.Args[1]
-	indexPath := "threats.bleve"
+
+	queryStr := r.URL.Query().Get("query")
+	if queryStr == "" {
+		http.Error(w, "Query parameter 'query' is required", http.StatusBadRequest)
+		return
+	}
 
 	index, err := bleve.Open(indexPath)
 	if err != nil {
-		log.Fatalf("Failed to open index: %v", err)
+		log.Printf("Failed to open index: %v", err)
+		http.Error(w, "Internal server error: could not open search index", http.StatusInternalServerError)
+		return
 	}
+	defer index.Close()
 
-	// --- 2. Build a simple Match Query ---
-	log.Printf(`Searching for "%s"...\n`, queryStr)
 	query := bleve.NewMatchQuery(queryStr)
-
 	searchRequest := bleve.NewSearchRequest(query)
-	searchRequest.Fields = []string{"actor", "campaign"} 
-	searchRequest.Size = 5 // Ask for the top 5 results
+	searchRequest.Fields = []string{"id", "actor", "campaign"}
+	searchRequest.Size = 10 // Limit results for API
 
-	// --- 3. Execute the Search ---
 	searchResults, err := index.Search(searchRequest)
 	if err != nil {
-		log.Fatalf("Search failed: %v", err)
+		log.Printf("Search failed: %v", err)
+		http.Error(w, "Internal server error: search failed", http.StatusInternalServerError)
+		return
 	}
 
-	// --- 4. Print Results ---
-	fmt.Printf("\n--- Search Results (%d hits) ---", searchResults.Total)
-	for i, hit := range searchResults.Hits {
-		fmt.Printf("%d. Document ID: %s (Score: %.2f)\n", i+1, hit.ID, hit.Score)
-		fmt.Printf("   Actor: %v\n", hit.Fields["actor"])
-		fmt.Printf("   Campaign: %v\n", hit.Fields["campaign"])
-		fmt.Println("-------------------------------------")
+	var apiResults []threatdnacore.APISearchResult
+	for _, hit := range searchResults.Hits {
+		actor := ""
+		if a, ok := hit.Fields["actor"]; ok {
+			if actorSlice, isSlice := a.([]interface{}); isSlice && len(actorSlice) > 0 {
+				if actorStr, isStr := actorSlice[0].(string); isStr {
+					actor = actorStr
+				}
+			}
+		}
+
+		campaign := ""
+		if c, ok := hit.Fields["campaign"]; ok {
+			if campaignSlice, isSlice := c.([]interface{}); isSlice && len(campaignSlice) > 0 {
+				if campaignStr, isStr := campaignSlice[0].(string); isStr {
+					campaign = campaignStr
+				}
+			}
+		}
+
+		apiResults = append(apiResults, threatdnacore.APISearchResult{
+			ID:       hit.ID,
+			Actor:    actor,
+			Campaign: campaign,
+			Score:    hit.Score,
+		})
 	}
 
-	if err := index.Close(); err != nil {
-		log.Printf("Failed to close index: %v", err)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(apiResults); err != nil {
+		log.Printf("Failed to encode search results: %v", err)
+		http.Error(w, "Internal server error: could not encode results", http.StatusInternalServerError)
 	}
+}
+
+func main() {
+	log.Printf("Starting ThreatDNA Search API on port %s", listenPort)
+
+	// Setup CORS
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"}, // Allow all origins for development
+		AllowCredentials: true,
+		AllowedMethods:   []string{"GET", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type"},
+	}) 
+
+	hm := http.NewServeMux()
+	hm.HandleFunc("/api/search", searchHandler)
+
+	handler := c.Handler(hm)
+
+	log.Fatal(http.ListenAndServe(listenPort, handler))
 }

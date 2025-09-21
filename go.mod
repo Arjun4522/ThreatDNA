@@ -7,6 +7,8 @@ toolchain go1.24.5
 require (
 	github.com/blevesearch/bleve/v2 v2.5.3
 	github.com/boltdb/bolt v1.3.1
+	github.com/rs/cors v1.11.1
+	github.com/segmentio/kafka-go v0.4.49
 )
 
 require (
@@ -32,7 +34,9 @@ require (
 	github.com/golang/protobuf v1.3.2 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/json-iterator/go v0.0.0-20171115153421-f7279a603ede // indirect
+	github.com/klauspost/compress v1.15.9 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
+	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	go.etcd.io/bbolt v1.4.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 )

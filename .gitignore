@@ -1,3 +1,20 @@
+# Binaries for programs and plugins
+*.exe
+*.test
+*.so
+
+# Go workspace file
+go.work
+
+# Vendor directory
+vendor/
+
+# Dependency directories
+/env/
+frontend/node_modules/
+
+# Compiled executables
+/bin/
 
 # Bleve search index
 /threats.bleve/
@@ -13,8 +30,6 @@ threat_genomes.db
 cti_results.json
 threat_genomes.json
 
-# Local environment directory
-/env/
-
-# Compiled executables
-/bin/
+# Docker
+*.dockerignore
+.docker/

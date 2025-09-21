@@ -99,3 +99,12 @@ type GenomeStats struct {
 	TacticFrequency   map[string]int     `json:"tactic_frequency"`
 	IOCTypeFrequency  map[string]int     `json:"ioc_type_frequency"`
 }
+
+// APISearchResult represents a single search result returned by the API
+type APISearchResult struct {
+	ID       string  `json:"id"`
+	Actor    string  `json:"actor,omitempty"`
+	Campaign string  `json:"campaign,omitempty"`
+	Score    float64 `json:"score"`
+	// Add other fields as needed, e.g., TTPs, IOCs, Description snippet
+}

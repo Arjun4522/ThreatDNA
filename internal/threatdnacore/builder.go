@@ -1,20 +1,24 @@
 package threatdnacore
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"sort"
 	"strings"
 	"time"
+
 	"github.com/boltdb/bolt"
+	"github.com/segmentio/kafka-go"
 )
 
 // GenomeBuilder creates genomes from CTI records
 type GenomeBuilder struct {
-	db *bolt.DB
+	db         *bolt.DB
+	KafkaBroker string
+	KafkaTopic  string
 }
 
 const (
@@ -24,7 +28,7 @@ const (
 )
 
 // NewGenomeBuilder creates a new genome builder
-func NewGenomeBuilder(dbPath string) (*GenomeBuilder, error) {
+func NewGenomeBuilder(dbPath, kafkaBroker, kafkaTopic string) (*GenomeBuilder, error) {
 	db, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -45,25 +49,62 @@ func NewGenomeBuilder(dbPath string) (*GenomeBuilder, error) {
 		return nil, err
 	}
 
-	return &GenomeBuilder{db: db}, nil
+	return &GenomeBuilder{
+		db:         db,
+		KafkaBroker: kafkaBroker,
+		KafkaTopic:  kafkaTopic,
+	}, nil
 }
 
-// LoadCTIRecords loads CTI records from JSON file
-func LoadCTIRecords(filename string) ([]CTIRecord, error) {
-	log.Printf("Loading CTI records from %s", filename)
-	
-	data, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file %s: %w", filename, err)
-	}
+// StartKafkaConsumer starts consuming CTI records from Kafka
+func (gb *GenomeBuilder) StartKafkaConsumer(ctx context.Context) {
+	log.Printf("Starting Kafka consumer for topic %s on broker %s", gb.KafkaTopic, gb.KafkaBroker)
 
-	var records []CTIRecord
-	if err := json.Unmarshal(data, &records); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
-	}
+	r := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:  []string{gb.KafkaBroker},
+		Topic:    gb.KafkaTopic,
+		GroupID:  "threatdna-genome-builder", // Unique consumer group ID
+		MinBytes: 10e3,                       // 10KB
+		MaxBytes: 10e6,                       // 10MB
+		MaxWait:  1 * time.Second,            // Maximum amount of time to wait for new data to become available
+	})
 
-	log.Printf("Loaded %d CTI records", len(records))
-	return records, nil
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Kafka consumer stopped.")
+			return
+		default:
+			m, err := r.ReadMessage(ctx)
+			if err != nil {
+				log.Printf("Error reading message from Kafka: %v", err)
+				continue
+			}
+
+			log.Printf("Received message from Kafka topic %s, partition %d, offset %d: %s",
+				m.Topic, m.Partition, m.Offset, string(m.Value))
+
+			var record CTIRecord
+			if err := json.Unmarshal(m.Value, &record); err != nil {
+				log.Printf("Failed to unmarshal CTI record from Kafka message: %v", err)
+				continue
+			}
+
+			// Build and save genome for this single CTI record
+			// Note: BuildGenome expects a slice, so we pass a slice with one record
+			genome, err := gb.BuildGenome([]CTIRecord{record})
+			if err != nil {
+				log.Printf("Failed to build genome from CTI record %s: %v", record.ID, err)
+				continue
+			}
+
+			if err := gb.SaveGenome(genome); err != nil {
+				log.Printf("Failed to save genome %s: %v", genome.ID, err)
+				continue
+			}
+			log.Printf("Successfully processed and saved genome %s from Kafka message", genome.ID)
+		}
+	}
 }
 
 // BuildGenome creates a genome from one or more CTI records
