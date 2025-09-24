@@ -1,104 +1,55 @@
 # ThreatDNA
 
-## Project Overview
-ThreatDNA is a comprehensive platform for processing, analyzing, and querying Cyber Threat Intelligence (CTI). It ingests CTI data from various sources, builds a structured knowledge base of threat genomes, and provides powerful search capabilities to identify and understand threat actors, campaigns, and techniques.
+ThreatDNA is a comprehensive threat intelligence platform designed to process, index, and enable searching of Cyber Threat Intelligence (CTI) data. It leverages a microservices architecture with Go for backend services and React for the frontend, orchestrated using Docker Compose.
 
-## Backend
+## Architecture
 
-### Technologies Used
-- **Go:** Primary language for backend services.
-- **Kafka:** Distributed streaming platform for CTI data.
-- **Zookeeper:** Manages Kafka brokers.
-- **BoltDB:** A key/value store used for persistent storage of threat genomes.
-- **Bleve:** A full-text search and indexing library for Go, used for efficient querying of threat data.
-- **Docker & Docker Compose:** For containerization and orchestration of all backend services.
+ThreatDNA is built as a modular system, with distinct services handling specific responsibilities.
 
-### Services
-- **Zookeeper & Kafka:** Provide the core messaging infrastructure for the CTI pipeline.
-- **Builder:** Processes static MITRE ATT&CK data (from `enterprise-attack.json`) and HTML reports found in the `data/` directory. It extracts relevant threat intelligence and builds structured threat "genomes" which are then stored in a BoltDB database. The builder is a one-shot process that exits after processing all data.
-- **Indexer:** Reads the processed threat genomes from the BoltDB database and creates optimized full-text search indexes using Bleve.
-- **Search:** Provides an API (or command-line interface) to query the threat intelligence database, leveraging the Bleve indexes for fast and efficient searches.
+### Components
 
-### Backend Workflow
-1.  The `builder` service processes static MITRE ATT&CK data from `enterprise-attack.json` and HTML reports found in the `data/` directory.
-2.  It extracts CTI and stores it in the BoltDB database. The builder then exits.
-3.  The `indexer` service then reads all genomes from the BoltDB database and builds efficient search indexes.
-4.  Finally, the `search` service uses these indexes to respond to queries, providing access to the comprehensive threat intelligence.
+*   **`producer`**: (Go Service) Responsible for ingesting initial CTI data and publishing it to a Kafka topic.
+*   **`builder`**: (Go Service) Consumes CTI records from Kafka, extracts Tactics, Techniques, and Procedures (TTPs) and Indicators of Compromise (IOCs), builds a threat "genome," and saves it to a Bleve database.
+*   **`search`**: (Go Service) Provides a RESTful API for querying the indexed threat data. It performs searches against the Bleve index and returns relevant results to the frontend.
+*   **`frontend`**: (React Application) A web-based user interface that allows users to interact with the ThreatDNA platform.
+*   **Kafka**: A distributed streaming platform used for asynchronous communication between the backend services.
+*   **Zookeeper**: Manages Kafka brokers and handles distributed coordination.
 
-### Setup and Running with Docker Compose
-1.  **Prerequisites:**
-    *   [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/) installed.
-    *   [Go](https://golang.org/doc/install) (for local development/testing, though Docker handles most backend Go needs).
+### Data Flow
 
-2.  **Build Docker Images:**
-    Navigate to the project root directory (`/home/arjun/Desktop/ThreatDNA`) and run:
+1.  **Ingestion**: The `producer` service reads CTI data and publishes it to a Kafka topic.
+2.  **Processing & Indexing**: The `builder` service consumes these raw CTI records from Kafka. It processes the data, extracts relevant entities (TTPs, IOCs), constructs a structured threat "genome," and indexes it into a Bleve search index (`threats.bleve`). This index is persistent and shared via a Docker volume.
+3.  **Querying**: The `frontend` application makes HTTP requests to the `search` service's API (e.g., `/api/search`).
+4.  **Searching**: The `search` service queries the `threats.bleve` index based on the user's input and returns structured search results to the `frontend`.
+
+## Getting Started
+
+These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
+
+### Prerequisites
+
+*   Docker Desktop
+*   Go (Golang)
+*   Node.js and npm
+
+### Running the Application
+
+1.  **Build and start all services**:
     ```bash
-    docker-compose build
+    docker-compose up --build -d
     ```
-    If you encounter issues or want to ensure a fresh build, use:
+2.  **Verify services are running**:
     ```bash
-    docker-compose build --no-cache
+    docker-compose ps
     ```
+3.  **Access the application**:
+    *   **Frontend**: `http://localhost:3000`
+    *   **Search API**: `curl "http://localhost:8080/api/search?query=ransomware"`
 
-3.  **Start the Backend Services:**
-    To run all backend services (Zookeeper, Kafka, Builder, Indexer, Search) in detached mode:
-    ```bash
-    docker-compose up -d
-    ```
-    To view logs in real-time (useful for debugging):
-    ```bash
-    docker-compose logs -f
-    ```
+## Known Issues
 
-4.  **Stop the Backend Services:**
-    To stop and remove all containers, networks, and volumes created by `docker-compose up`:
-    ```bash
-    docker-compose down
-    ```
+### Search Service Not Starting
 
-## Frontend
-
-### Technologies Used
-- **React:** A JavaScript library for building user interfaces.
-- **TypeScript:** A typed superset of JavaScript that compiles to plain JavaScript.
-- (Add any other relevant frontend technologies like Bootstrap, Material UI, etc. if known from `package.json`)
-
-### Setup and Running
-1.  **Prerequisites:**
-    *   [Node.js](https://nodejs.org/en/download/) and [npm](https://docs.npmjs.com/cli/v7/commands/npm-install) (or [yarn](https://classic.yarnpkg.com/en/docs/install/)) installed.
-
-2.  **Install Dependencies:**
-    Navigate to the `frontend/` directory:
-    ```bash
-    cd frontend/
-    npm install # or yarn install
-    ```
-
-3.  **Start the Frontend Development Server:**
-    From the `frontend/` directory:
-    ```bash
-    npm start # or yarn start
-    ```
-    This will typically open the application in your browser at `http://localhost:3000`.
-
-## Testing
-
-### Go Backend Tests
-1.  **Prerequisites:**
-    *   [Go](https://golang.org/doc/install) installed.
-    *   Docker and Docker Compose (for integration tests that rely on DB).
-
-2.  **Run Tests:**
-    Navigate to the project root directory and run:
-    ```bash
-    go test ./...
-    ```
-    This command will execute all Go tests, including integration tests that spin up Docker Compose services.
-
-### Frontend Tests
-1.  **Run Tests:**
-    Navigate to the `frontend/` directory:
-    ```bash
-    cd frontend/
-    npm test # or yarn test
-    ```
+*   **Symptom**: The `search` service fails to start and may not produce any logs.
+*   **Cause**: The `builder` service and the `search` service are both trying to access the same Bleve index file on disk. Bleve is designed for concurrent access within a single process, not from multiple processes. This causes a file locking issue that prevents the `search` service from starting.
+*   **Solution**: The recommended solution is to merge the `builder` and `search` services into a single service. This aligns with Bleve's design and will resolve the file locking issue. This work is currently in progress.

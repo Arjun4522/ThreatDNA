@@ -34,12 +34,13 @@ type IOC struct {
 
 // AttackTechnique contains MITRE ATT&CK technique information
 type AttackTechnique struct {
-	ID          string
-	Name        string
-	Description string
-	Keywords    []string
-	Platforms   []string
-	Tactics     []string
+	ID                  string
+	Name                string
+	Description         string
+	Keywords            []string
+	Platforms           []string
+	Tactics             []string
+	ExternalReferences  []ExternalReference
 }
 
 // MITREAttackBundle represents the top-level structure of the enterprise-attack.json file.
