@@ -1,4 +1,4 @@
-version: '3'
+version: '3.8'
 
 volumes:
   threats_bleve_data:
@@ -30,42 +30,69 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
 
+  kafka-setup:
+    image: confluentinc/cp-kafka:7.0.1
+    hostname: kafka-setup
+    depends_on:
+      - kafka
+    command: "bash -c 'echo Waiting for Kafka to be ready... && \
+              cub kafka-ready -b kafka:9092 1 20 && \
+              kafka-topics --create --topic cti-records --bootstrap-server kafka:9092 --partitions 1 --replication-factor 1'"
+    restart: on-failure
+
+  producer:
+    build:
+      context: .
+      dockerfile: cmd/producer/Dockerfile
+    environment:
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: cti-records
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      kafka-setup:
+        condition: service_completed_successfully
+    command: ["/app/producer"]
 
   builder:
     build:
       context: .
       dockerfile: cmd/builder/Dockerfile
-    depends_on: []
+    depends_on:
+      kafka-setup:
+        condition: service_completed_successfully
     environment:
       KAFKA_BROKER: kafka:9092
-      KAFKA_TOPIC: test-cti-records
+      KAFKA_TOPIC: cti-records
       DB_PATH: /app/threats.bleve/test_genomes.db
     volumes:
       - threats_bleve_data:/app/threats.bleve
-      - ./data:/app/data
-    command: ["builder"]
-
-  indexer:
-    build:
-      context: .
-      dockerfile: cmd/indexer/Dockerfile
-    depends_on: []
-    environment:
-      DB_PATH: /app/threats.bleve/test_genomes.db # Assuming indexer uses the same DB
-    volumes:
-      - threats_bleve_data:/app/threats.bleve
-    command: ["indexer"]
+    restart: unless-stopped
+    command: ["/app/builder"]
 
   search:
     build:
       context: .
       dockerfile: cmd/search/Dockerfile
     depends_on:
-      - indexer # Search depends on indexer to have built the index
+      - builder
     environment:
-      DB_PATH: /app/threats.bleve/test_genomes.db # Assuming search queries the same DB
+      DB_PATH: /app/threats.bleve/test_genomes.db
     volumes:
       - threats_bleve_data:/app/threats.bleve
     ports:
-      - "8080:8080" # Example port if search exposes an API
-    command: ["search"]
+      - "8080:8080"
+    logging:
+      driver: "json-file"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - search
+    environment:
+      REACT_APP_API_URL: http://localhost:8080
+    command: ["npm", "start"]

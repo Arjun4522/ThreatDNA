@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/rs/cors"
@@ -11,15 +12,14 @@ import (
 	"threatdna/internal/threatdnacore"
 )
 
-const indexPath = "threats.bleve/bleve_index"
+const indexPath = "threats.bleve/test_genomes.db"
 const listenPort = ":8080"
+
+var index bleve.Index
 
 // searchHandler handles search requests from the frontend
 func searchHandler(w http.ResponseWriter, r *http.Request) {
-	// Set CORS headers for all responses
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	log.Println("Received search request") // Added for debugging
 
 	// Handle preflight OPTIONS request
 	if r.Method == "OPTIONS" {
@@ -33,13 +33,10 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	index, err := bleve.Open(indexPath)
-	if err != nil {
-		log.Printf("Failed to open index: %v", err)
-		http.Error(w, "Internal server error: could not open search index", http.StatusInternalServerError)
+	if index == nil {
+		http.Error(w, "Internal server error: search index is not available", http.StatusInternalServerError)
 		return
 	}
-	defer index.Close()
 
 	query := bleve.NewMatchQuery(queryStr)
 	searchRequest := bleve.NewSearchRequest(query)
@@ -89,15 +86,31 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	log.Println("Search program started")
+	var err error
+	// Retry opening the Bleve index to ensure the builder has time to create it
+	for i := 0; i < 10; i++ {
+		log.Println("Attempting to open Bleve index...")
+		index, err = bleve.OpenUsing(indexPath, map[string]interface{}{"read_only": true})
+		if err == nil {
+			log.Println("Successfully opened Bleve index.")
+			break
+		}
+		log.Printf("Attempt %d: Failed to open index: %v. Retrying in 5 seconds...", i+1, err)
+		time.Sleep(5 * time.Second)
+	}
+
+	if err != nil {
+		log.Fatalf("Failed to open index after multiple retries: %v", err)
+	}
+
 	log.Printf("Starting ThreatDNA Search API on port %s", listenPort)
 
 	// Setup CORS
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"}, // Allow all origins for development
-		AllowCredentials: true,
+		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type"},
-	}) 
+	})
 
 	hm := http.NewServeMux()
 	hm.HandleFunc("/api/search", searchHandler)

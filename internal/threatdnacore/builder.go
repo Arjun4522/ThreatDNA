@@ -6,68 +6,71 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/boltdb/bolt"
+	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/segmentio/kafka-go"
 )
 
-// GenomeBuilder creates genomes from CTI records
+// GenomeBuilder processes CTI records, builds threat genomes, and manages their storage and Kafka interactions.
 type GenomeBuilder struct {
-	db         *bolt.DB
-	KafkaBroker string
-	KafkaTopic  string
+	db          bleve.Index
+	kafkaReader *kafka.Reader
+	dbPath      string
+	mu          sync.Mutex // Mutex to protect concurrent DB access
 }
 
-const (
-	GenomeBucket = "genomes"
-	IndexBucket  = "genome_index"
-	StatsBucket  = "genome_stats"
-)
-
-// NewGenomeBuilder creates a new genome builder
+// NewGenomeBuilder creates a new instance of GenomeBuilder.
 func NewGenomeBuilder(dbPath, kafkaBroker, kafkaTopic string) (*GenomeBuilder, error) {
-	db, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 1 * time.Second})
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+	// Ensure the directory for the Bleve database exists
+	dir := dbPath[:len(dbPath)-len("/test_genomes.db")] // Extract directory from dbPath
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, err
+		}
 	}
 
-	// Initialize buckets
-	err = db.Update(func(tx *bolt.Tx) error {
-		buckets := []string{GenomeBucket, IndexBucket, StatsBucket}
-		for _, bucket := range buckets {
-			if _, err := tx.CreateBucketIfNotExists([]byte(bucket)); err != nil {
-				return fmt.Errorf("failed to create bucket %s: %w", bucket, err)
-			}
+	db, err := bleve.Open(dbPath)
+	if err == bleve.ErrorIndexPathDoesNotExist {
+		log.Printf("Creating new Bleve index at %s...", dbPath)
+		indexMapping := CreateBleveIndexMapping()
+		db, err = bleve.New(dbPath, indexMapping)
+		if err != nil {
+			return nil, err
 		}
-		return nil
-	})
-	if err != nil {
-		db.Close()
+	} else if err != nil {
 		return nil, err
 	}
 
-	return &GenomeBuilder{
-		db:         db,
-		KafkaBroker: kafkaBroker,
-		KafkaTopic:  kafkaTopic,
-	}, nil
+	builder := &GenomeBuilder{
+		db:     db,
+		dbPath: dbPath,
+	}
+
+	builder.kafkaReader = kafka.NewReader(kafka.ReaderConfig{
+		Brokers:  []string{kafkaBroker},
+		Topic:    kafkaTopic, // This is the topic the builder consumes from
+		GroupID:  "threatdna-builder-group",
+		MinBytes: 10e3, // 10KB
+		MaxBytes: 10e6, // 10MB
+		MaxAttempts: 10,
+		Dialer: &kafka.Dialer{
+			Timeout:   10 * time.Second,
+			DualStack: true,
+		},
+	})
+
+	return builder, nil
 }
 
 // StartKafkaConsumer starts consuming CTI records from Kafka
 func (gb *GenomeBuilder) StartKafkaConsumer(ctx context.Context) {
-	log.Printf("Starting Kafka consumer for topic %s on broker %s", gb.KafkaTopic, gb.KafkaBroker)
-
-	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  []string{gb.KafkaBroker},
-		Topic:    gb.KafkaTopic,
-		GroupID:  "threatdna-genome-builder", // Unique consumer group ID
-		MinBytes: 10e3,                       // 10KB
-		MaxBytes: 10e6,                       // 10MB
-		MaxWait:  1 * time.Second,            // Maximum amount of time to wait for new data to become available
-	})
+	log.Printf("Starting Kafka consumer for topic %s on broker %s", gb.kafkaReader.Config().Topic, gb.kafkaReader.Config().Brokers[0])
 
 	for {
 		select {
@@ -75,7 +78,7 @@ func (gb *GenomeBuilder) StartKafkaConsumer(ctx context.Context) {
 			log.Println("Kafka consumer stopped.")
 			return
 		default:
-			m, err := r.ReadMessage(ctx)
+			m, err := gb.kafkaReader.ReadMessage(ctx)
 			if err != nil {
 				log.Printf("Error reading message from Kafka: %v", err)
 				continue
@@ -90,19 +93,17 @@ func (gb *GenomeBuilder) StartKafkaConsumer(ctx context.Context) {
 				continue
 			}
 
-			// Build and save genome for this single CTI record
-			// Note: BuildGenome expects a slice, so we pass a slice with one record
 			genome, err := gb.BuildGenome([]CTIRecord{record})
 			if err != nil {
 				log.Printf("Failed to build genome from CTI record %s: %v", record.ID, err)
 				continue
 			}
 
-			if err := gb.SaveGenome(genome); err != nil {
-				log.Printf("Failed to save genome %s: %v", genome.ID, err)
+			if err := gb.indexGenome(genome); err != nil {
+				log.Printf("Failed to index genome %s: %v", genome.ID, err)
 				continue
 			}
-			log.Printf("Successfully processed and saved genome %s from Kafka message", genome.ID)
+			log.Printf("Successfully processed and indexed genome %s from Kafka message", genome.ID)
 		}
 	}
 }
@@ -127,7 +128,7 @@ func (gb *GenomeBuilder) BuildGenome(records []CTIRecord) (*Genome, error) {
 	var allSourceTextBuilder strings.Builder
 	for _, record := range records {
 		sourceIDs[record.ID] = true
-		
+
 		// Track dates
 		if firstSeen.IsZero() || record.Date.Before(firstSeen) {
 			firstSeen = record.Date
@@ -166,7 +167,7 @@ func (gb *GenomeBuilder) BuildGenome(records []CTIRecord) (*Genome, error) {
 
 	for _, ttp := range allTTPs {
 		techID := ttp.TechniqueID
-		
+
 		// Skip duplicates (keep first occurrence due to sorting)
 		if seenTTPs[techID] {
 			continue
@@ -208,7 +209,7 @@ func (gb *GenomeBuilder) BuildGenome(records []CTIRecord) (*Genome, error) {
 	if len(ttps) > 0 {
 		avgConfidence = totalConfidence / float64(len(ttps))
 	}
-	
+
 	// Create genome
 	genome := &Genome{
 		ID:          generateGenomeID(ttps, actor, campaign),
@@ -232,175 +233,41 @@ func (gb *GenomeBuilder) BuildGenome(records []CTIRecord) (*Genome, error) {
 		},
 	}
 
-	log.Printf("Built genome %s with %d TTPs (confidence: %.2f)", 
+	log.Printf("Built genome %s with %d TTPs (confidence: %.2f)",
 		genome.ID, len(genome.TTPs), genome.Confidence)
 
 	return genome, nil
 }
 
-// SaveGenome saves genome to database
-func (gb *GenomeBuilder) SaveGenome(genome *Genome) error {
-	data, err := json.Marshal(genome)
-	if err != nil {
-		return fmt.Errorf("failed to marshal genome: %w", err)
+// indexGenome enriches and indexes the document.
+func (gb *GenomeBuilder) indexGenome(genome *Genome) error {
+	searchDoc := SearchDocument{
+		Actor:         genome.Actor,
+		Campaign:      genome.Campaign,
+		TTPs:          genome.TTPs,
+		Tactics:       genome.Tactics,
+		Platforms:     genome.Platforms,
+		Confidence:    genome.Confidence,
+		FirstSeen:     genome.FirstSeen,
+		LastSeen:      genome.LastSeen,
+		AllSourceText: genome.AllSourceText,
+		Type:          "genome",
 	}
 
-	return gb.db.Update(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket([]byte(GenomeBucket))
-		if bucket == nil {
-			return fmt.Errorf("genome bucket not found")
-		}
-
-		if err := bucket.Put([]byte(genome.ID), data); err != nil {
-			return fmt.Errorf("failed to save genome: %w", err)
-		}
-
-		log.Printf("Saved genome %s to database", genome.ID)
-		return nil
-	})
+	return gb.db.Index(genome.ID, searchDoc)
 }
 
-// GetGenome retrieves a genome by ID
-func (gb *GenomeBuilder) GetGenome(id string) (*Genome, error) {
-	var genome Genome
-
-	err := gb.db.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket([]byte(GenomeBucket))
-		if bucket == nil {
-			return fmt.Errorf("genome bucket not found")
-		}
-
-		data := bucket.Get([]byte(id))
-		if data == nil {
-			return fmt.Errorf("genome %s not found", id)
-		}
-
-		return json.Unmarshal(data, &genome)
-	})
-
-	return &genome, err
-}
-
-// ListGenomes returns all genomes with optional filtering
-func (gb *GenomeBuilder) ListGenomes(actor, platform string, limit int) ([]*Genome, error) {
-	var genomes []*Genome
-	count := 0
-
-	err := gb.db.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket([]byte(GenomeBucket))
-		if bucket == nil {
-			return fmt.Errorf("genome bucket not found")
-		}
-
-		cursor := bucket.Cursor()
-		for key, value := cursor.First(); key != nil; key, value = cursor.Next() {
-			if limit > 0 && count >= limit {
-				break
-			}
-
-			var genome Genome
-			if err := json.Unmarshal(value, &genome); err != nil {
-				log.Printf("Warning: failed to unmarshal genome %s: %v", string(key), err)
-				continue
-			}
-
-			// Apply filters
-			if actor != "" && !strings.Contains(strings.ToLower(genome.Actor), strings.ToLower(actor)) {
-				continue
-			}
-
-			if platform != "" {
-				found := false
-				for _, p := range genome.Platforms {
-					if strings.Contains(strings.ToLower(p), strings.ToLower(platform)) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					continue
-				}
-			}
-
-			genomes = append(genomes, &genome)
-			count++
-		}
-
-		return nil
-	})
-
-	return genomes, err
-}
-
-// GetGenomeStats computes statistics about the genome collection
-func (gb *GenomeBuilder) GetGenomeStats() (*GenomeStats, error) {
-	stats := &GenomeStats{
-		TTPFrequency:     make(map[string]int),
-		TacticFrequency:  make(map[string]int),
-		IOCTypeFrequency: make(map[string]int),
-	}
-
-	actors := make(map[string]bool)
-	campaigns := make(map[string]bool)
-	totalLength := 0
-
-	err := gb.db.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket([]byte(GenomeBucket))
-		if bucket == nil {
-			return fmt.Errorf("genome bucket not found")
-		}
-
-		cursor := bucket.Cursor()
-		for key, value := cursor.First(); key != nil; key, value = cursor.Next() {
-			var genome Genome
-			if err := json.Unmarshal(value, &genome); err != nil {
-				continue
-			}
-
-			stats.TotalGenomes++
-			totalLength += len(genome.TTPs)
-
-			// Track unique actors and campaigns
-			if genome.Actor != "" {
-				actors[genome.Actor] = true
-			}
-			if genome.Campaign != "" {
-				campaigns[genome.Campaign] = true
-			}
-
-			// Count TTP frequency
-			for _, ttp := range genome.TTPs {
-				stats.TTPFrequency[ttp]++
-			}
-
-			// Count tactic frequency
-			for _, tactic := range genome.Tactics {
-				if tactic != "unknown" {
-					stats.TacticFrequency[tactic]++
-				}
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	stats.UniqueActors = len(actors)
-	stats.UniqueCampaigns = len(campaigns)
-	if stats.TotalGenomes > 0 {
-		stats.AvgGenomeLength = float64(totalLength) / float64(stats.TotalGenomes)
-	}
-
-	return stats, nil
-}
-
-// Close closes the database connection
+// Close closes the Bleve database and Kafka connections.
 func (gb *GenomeBuilder) Close() error {
 	if gb.db != nil {
-		return gb.db.Close()
+		if err := gb.db.Close(); err != nil {
+			log.Printf("Error closing Bleve database: %v", err)
+		}
+	}
+	if gb.kafkaReader != nil {
+		if err := gb.kafkaReader.Close(); err != nil {
+			log.Printf("Error closing Kafka reader: %v", err)
+		}
 	}
 	return nil
 }
@@ -429,7 +296,7 @@ func determineActorAndCampaign(records []CTIRecord) (string, string) {
 		}
 	}
 
-	// Find most common campaign  
+	// Find most common campaign
 	var bestCampaign string
 	maxCampaignCount := 0
 	for campaign, count := range campaignCounts {
@@ -446,7 +313,7 @@ func generateGenomeID(ttps []string, actor, campaign string) string {
 	content := strings.Join(ttps, "|") + "|" + actor + "|" + campaign
 	hash := sha256.Sum256([]byte(content))
 	shortHash := fmt.Sprintf("%x", hash)[:12]
-	
+
 	timestamp := time.Now().Format("20060102")
 	return fmt.Sprintf("G-%s-%s", timestamp, shortHash)
 }
@@ -472,4 +339,37 @@ func RemoveDuplicates(items []string) []string {
 		}
 	}
 	return result
+}
+
+// SearchDocument is the enriched document we will store in the Bleve index.
+type SearchDocument struct {
+	Actor           string    `json:"actor"`
+	Campaign        string    `json:"campaign"`
+	TTPs            []string  `json:"ttps"`
+	Tactics         []string  `json:"tactics"`
+	Platforms       []string  `json:"platforms"`
+	Confidence      float64   `json:"confidence"`
+	FirstSeen       time.Time `json:"first_seen"`
+	LastSeen        time.Time `json:"last_seen"`
+	AllSourceText   string    `json:"all_source_text"`
+	Type            string    `json:"type"`
+}
+
+// createIndex builds and returns a new Bleve index with the correct mapping.
+func CreateBleveIndexMapping() *mapping.IndexMappingImpl {
+	keywordFieldMapping := bleve.NewKeywordFieldMapping()
+	testFieldMapping := bleve.NewTextFieldMapping()
+
+	docMapping := bleve.NewDocumentMapping()
+	docMapping.AddFieldMappingsAt("actor", keywordFieldMapping)
+	docMapping.AddFieldMappingsAt("campaign", keywordFieldMapping)
+	docMapping.AddFieldMappingsAt("ttps", keywordFieldMapping)
+	docMapping.AddFieldMappingsAt("tactics", keywordFieldMapping)
+	docMapping.AddFieldMappingsAt("platforms", keywordFieldMapping)
+	docMapping.AddFieldMappingsAt("all_source_text", testFieldMapping)
+
+	indexMapping := bleve.NewIndexMapping()
+	indexMapping.AddDocumentMapping("genome", docMapping)
+
+	return indexMapping
 }
